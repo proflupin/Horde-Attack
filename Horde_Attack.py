@@ -216,8 +216,6 @@ class Game:
         self.next_upgrade_score = 10
         self.wave_number = 1
         self.game_over = False
-        self.enemy_counter = 1  # Track unique enemy numbers
-        self.enemy_numbers = {}  # Map enemy objects to their numbers
 
     def start_menu(self):
         os.system("cls" if os.name == "nt" else "clear")
@@ -296,10 +294,6 @@ class Game:
         enemy.min_damage = int(enemy.min_damage * dmg_mult)
         enemy.max_damage = int(enemy.max_damage * dmg_mult)
 
-        # Assign persistent enemy number
-        self.enemy_numbers[enemy] = self.enemy_counter
-        self.enemy_counter += 1
-
         self.current_enemies.append(enemy)
 
     def spawn_wave(self):
@@ -312,10 +306,16 @@ class Game:
                 self.player.max_hp += 2
                 self.player.hp += 2
 
-        # Always spawn 1-2 enemies, max 5 total
-        amount = min(2, 5 - len(self.current_enemies))  # Don't exceed 5
-        for _ in range(amount):
+        # Count current alive enemies
+        alive_count = sum(1 for e in self.current_enemies if e.is_alive())
+
+        # Always try to spawn 1-2 enemies, up to max 5 total
+        amount_to_spawn = min(2, 5 - alive_count)
+
+        # Spawn enemies
+        for _ in range(amount_to_spawn):
             self.spawn_enemies()
+
         self.wave_number += 1
 
     def display_player_stats(self):
@@ -332,11 +332,11 @@ class Game:
 
     def display_enemies(self):
         print("\nENEMIES")
+        alive_count = 1  # Start numbering from 1 for alive enemies
         for enemy in self.current_enemies:
             if enemy.is_alive():
-                print(
-                    f"{self.enemy_numbers[enemy]}. {enemy.name} - {enemy.hp}/{enemy.max_hp} HP"
-                )
+                print(f"{alive_count}. {enemy.name} - {enemy.hp}/{enemy.max_hp} HP")
+                alive_count += 1
 
     def offer_upgrade(self):
         if not self.player:
@@ -399,14 +399,18 @@ class Game:
                     print("Invalid input.")
                     continue
 
-                # Find enemy by enemy_number instead of index
+                # Find enemy by sequential number among alive enemies
                 target_number = int(target)
                 enemy = None
 
+                # Find the enemy with the matching display number
+                alive_count = 1
                 for e in self.current_enemies:
-                    if self.enemy_numbers[e] == target_number and e.is_alive():
-                        enemy = e
-                        break
+                    if e.is_alive():
+                        if alive_count == target_number:
+                            enemy = e
+                            break
+                        alive_count += 1
 
                 # If enemy not found or not alive
                 if enemy is None:
@@ -435,18 +439,10 @@ class Game:
                         self.next_upgrade_score += 10
                         self.player.level += 1
 
-                        # Remove dead enemies from the list and clean up enemy numbers
-                        alive_enemies = [
+                        # Remove dead enemies from the list
+                        self.current_enemies = [
                             e for e in self.current_enemies if e.is_alive()
                         ]
-                        # Clean up enemy numbers dictionary
-                        dead_enemies = [
-                            e for e in self.current_enemies if not e.is_alive()
-                        ]
-                        for dead_enemy in dead_enemies:
-                            if dead_enemy in self.enemy_numbers:
-                                del self.enemy_numbers[dead_enemy]
-                        self.current_enemies = alive_enemies
                 else:
                     if crit:
                         print(
