@@ -302,8 +302,9 @@ class Game:
         # Wave bonus every 3 waves
         if self.wave_number > 1 and self.wave_number % 3 == 1:
             print("🎁 Bonus Wave! You gain +2 Max HP!")
-            self.player.max_hp += 2
-            self.player.hp += 2
+            if self.player:
+                self.player.max_hp += 2
+                self.player.hp += 2
 
         # Always spawn 1-2 enemies, max 3 total
         amount = min(2, 3 - len(self.current_enemies))  # Don't exceed 3
@@ -312,23 +313,27 @@ class Game:
         self.wave_number += 1
 
     def display_player_stats(self):
-        print(f"\nKnight {self.player.name} STATS")
-        print(f"You have {self.player.hp} HP")
-        print(f"Kill count = {self.player.kills}")
-        print(f"Crit chance = {self.player.crit_chance}")
-        print(f"Level = {self.player.level}")
-        print(f"Current Score = {self.player.score}")
-        for upgrade_name, count in self.player.upgrades.items():
-            if count > 0:
-                print(f"{upgrade_name} x{count}")
+        if self.player:
+            print(f"\nKnight {self.player.name} STATS")
+            print(f"You have {self.player.hp}/{self.player.max_hp} HP")
+            print(f"Kill count = {self.player.kills}")
+            print(f"Crit chance = {self.player.crit_chance}%")
+            print(f"Level = {self.player.level}")
+            print(f"Current Score = {self.player.score}")
+            for upgrade_name, count in self.player.upgrades.items():
+                if count > 0:
+                    print(f"{upgrade_name} x{count}")
 
     def display_enemies(self):
         print("\nENEMIES")
         for i, enemy in enumerate(self.current_enemies):
             if enemy.is_alive():
-                print(f"{i + 1}. {enemy.name} - {enemy.hp} HP")
+                print(f"{i + 1}. {enemy.name} - {enemy.hp}/{enemy.max_hp} HP")
 
     def offer_upgrade(self):
+        if not self.player:
+            return
+
         print("\n🎉 LEVEL UP! Choose an upgrade:")
         print("1. +5 Max HP")
         print("2. +1 Damage (Min or Max)")
@@ -353,6 +358,9 @@ class Game:
             print(f"\nUPGRADE! You gained {upgrade_name}")
 
     def player_turn(self):
+        if not self.player:
+            return
+
         while True:
             action = (
                 input("\nWhat will you do? (sword/recover/menu/quit): ").strip().lower()
@@ -447,7 +455,7 @@ class Game:
                     amount_healed = random.randint(1, 3)
                     self.player.heal(amount_healed)
                     print(f"You catch your breath and heal {amount_healed}")
-                    print(f"You are now at {self.player.hp} HP")
+                    print(f"You are now at {self.player.hp}/{self.player.max_hp} HP")
                     return
 
             elif action == "menu":
@@ -490,6 +498,9 @@ class Game:
                 print("Invalid choice. Please enter 1, 2, or 3.")
 
     def enemy_turn(self):
+        if not self.player:
+            return
+
         # Process each enemy's turn
         for enemy in self.current_enemies[
             :
@@ -535,35 +546,38 @@ class Game:
                 print(f"You took {damage_taken} damage from {enemy.name}!")
 
     def check_game_over(self):
-        if not self.player.is_alive():
-            print(f"\n💀 GAME OVER! You have been defeated.")
-            print(f"Final Score: {self.player.score}")
-            print(f"Enemies Slain: {self.player.kills}")
+        if not self.player or not self.player.is_alive():
+            if self.player:
+                print("\n💀 GAME OVER! You have been defeated.")
+                print(f"Final Score: {self.player.score}")
+                print(f"Enemies Slain: {self.player.kills}")
 
-            global highscore, record_holder
-            if self.player.score > highscore:
-                highscore = self.player.score
-                record_holder = self.player.name
-                with open("highscore.json", "w") as f:
-                    json.dump(
-                        {
-                            "highscore": highscore,
-                            "kill_count": self.player.kills,
-                            "record_holder": record_holder,
-                        },
-                        f,
-                        indent=4,
+                global highscore, record_holder
+                if self.player.score > highscore:
+                    highscore = self.player.score
+                    record_holder = self.player.name
+                    with open("highscore.json", "w") as f:
+                        json.dump(
+                            {
+                                "highscore": highscore,
+                                "kill_count": self.player.kills,
+                                "record_holder": record_holder,
+                            },
+                            f,
+                            indent=4,
+                        )
+                    print("🎉 NEW HIGHSCORE!")
+                    print(
+                        f"{record_holder} now holds the record with {highscore} points!"
                     )
-                print("🎉 NEW HIGHSCORE!")
-                print(f"{record_holder} now holds the record with {highscore} points!")
-            else:
-                print("You didn't quite beat the high score!")
-                print(
-                    f"Your score: {self.player.score} | High score: {highscore} | Held by: {record_holder}"
-                )
+                else:
+                    print("You didn't quite beat the high score!")
+                    print(
+                        f"Your score: {self.player.score} | High score: {highscore} | Held by: {record_holder}"
+                    )
 
-            self.game_over = True
-            return True
+                self.game_over = True
+                return True
         return False
 
     def play(self):
