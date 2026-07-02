@@ -254,7 +254,7 @@ class Game:
 
         # Spawn logic with scaling
         which1 = random.randint(1, 100)
-        if self.wave_number < 3:
+        if self.wave_number < 5:
             # Early waves: mostly weak enemies
             if which1 <= 60:
                 enemy = Gremlin()
@@ -262,7 +262,7 @@ class Game:
             else:
                 enemy = Goblin()
                 print("Spawned Goblin")
-        elif self.wave_number < 6:
+        elif self.wave_number < 9:
             # Mid waves: mix
             if which1 <= 30:
                 enemy = Gremlin()
@@ -306,8 +306,8 @@ class Game:
                 self.player.max_hp += 2
                 self.player.hp += 2
 
-        # Always spawn 1-2 enemies, max 3 total
-        amount = min(2, 3 - len(self.current_enemies))  # Don't exceed 3
+        # Always spawn 1-2 enemies, max 5 total
+        amount = min(2, 5 - len(self.current_enemies))  # Don't exceed 5
         for _ in range(amount):
             self.spawn_enemies()
         self.wave_number += 1
@@ -363,7 +363,9 @@ class Game:
 
         while True:
             action = (
-                input("\nWhat will you do? (sword/recover/menu/quit): ").strip().lower()
+                input("\nWhat will you do? (Sword, Recover, Menu, or Quit): ")
+                .strip()
+                .lower()
             )
 
             if action in ("sword", "swing", "sword swing"):
@@ -424,6 +426,10 @@ class Game:
                         self.offer_upgrade()
                         self.next_upgrade_score += 10
                         self.player.level += 1
+
+                        self.current_enemies = [
+                            e for e in self.current_enemies if e.is_alive()
+                        ]
                 else:
                     if crit:
                         print(
