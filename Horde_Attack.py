@@ -216,6 +216,8 @@ class Game:
         self.next_upgrade_score = 10
         self.wave_number = 1
         self.game_over = False
+        self.enemy_counter = 1  # Track unique enemy numbers
+        self.enemy_numbers = {}  # Map enemy objects to their numbers
 
     def start_menu(self):
         os.system("cls" if os.name == "nt" else "clear")
@@ -294,6 +296,10 @@ class Game:
         enemy.min_damage = int(enemy.min_damage * dmg_mult)
         enemy.max_damage = int(enemy.max_damage * dmg_mult)
 
+        # Assign persistent enemy number
+        self.enemy_numbers[enemy] = self.enemy_counter
+        self.enemy_counter += 1
+
         self.current_enemies.append(enemy)
 
     def spawn_wave(self):
@@ -326,9 +332,11 @@ class Game:
 
     def display_enemies(self):
         print("\nENEMIES")
-        for i, enemy in enumerate(self.current_enemies):
+        for enemy in self.current_enemies:
             if enemy.is_alive():
-                print(f"{i + 1}. {enemy.name} - {enemy.hp}/{enemy.max_hp} HP")
+                print(
+                    f"{self.enemy_numbers[enemy]}. {enemy.name} - {enemy.hp}/{enemy.max_hp} HP"
+                )
 
     def offer_upgrade(self):
         if not self.player:
@@ -391,18 +399,18 @@ class Game:
                     print("Invalid input.")
                     continue
 
-                # Find the index of that enemy
-                index = int(target) - 1
+                # Find enemy by enemy_number instead of index
+                target_number = int(target)
+                enemy = None
 
-                # If it's not in the index, ask again
-                if index < 0 or index >= len(self.current_enemies):
-                    print("That enemy doesn't exist.")
-                    continue
+                for e in self.current_enemies:
+                    if self.enemy_numbers[e] == target_number and e.is_alive():
+                        enemy = e
+                        break
 
-                # Check if enemy is alive
-                enemy = self.current_enemies[index]
-                if not enemy.is_alive():
-                    print("That enemy is already dead.")
+                # If enemy not found or not alive
+                if enemy is None:
+                    print("That enemy doesn't exist or is already dead.")
                     continue
 
                 # Attack the enemy
@@ -427,9 +435,18 @@ class Game:
                         self.next_upgrade_score += 10
                         self.player.level += 1
 
-                        self.current_enemies = [
+                        # Remove dead enemies from the list and clean up enemy numbers
+                        alive_enemies = [
                             e for e in self.current_enemies if e.is_alive()
                         ]
+                        # Clean up enemy numbers dictionary
+                        dead_enemies = [
+                            e for e in self.current_enemies if not e.is_alive()
+                        ]
+                        for dead_enemy in dead_enemies:
+                            if dead_enemy in self.enemy_numbers:
+                                del self.enemy_numbers[dead_enemy]
+                        self.current_enemies = alive_enemies
                 else:
                     if crit:
                         print(
