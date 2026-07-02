@@ -309,12 +309,13 @@ class Game:
         # Count current alive enemies
         alive_count = sum(1 for e in self.current_enemies if e.is_alive())
 
-        # Always try to spawn 1-2 enemies, up to max 5 total
+        # Spawn enemies to maintain 1-2 new enemies, up to max 5 total
         amount_to_spawn = min(2, 5 - alive_count)
 
-        # Spawn enemies
-        for _ in range(amount_to_spawn):
-            self.spawn_enemies()
+        # Spawn enemies if we have room
+        if amount_to_spawn > 0:
+            for _ in range(amount_to_spawn):
+                self.spawn_enemies()
 
         self.wave_number += 1
 
@@ -608,8 +609,9 @@ class Game:
             # Display player stats
             self.display_player_stats()
 
-            # Spawn wave if needed
-            if not any(e.is_alive() for e in self.current_enemies):
+            # Spawn wave if needed - spawn when we have room for more enemies
+            alive_count = sum(1 for e in self.current_enemies if e.is_alive())
+            if alive_count < 5:  # If we have room for more enemies
                 self.spawn_wave()
 
             # Display enemies
