@@ -49,7 +49,7 @@ class Player:
             "Crit Upgrade": 0,
         }
         self.kills = 0
-        self.crit_chance = 5
+        self.crit_chance = 10
         self.level = 0
 
     def damage(self):
@@ -69,9 +69,8 @@ class Player:
     def attack(self, enemy):
         damage = self.damage()
         crit = random.randint(1, 100) <= self.crit_chance
-
         if crit:
-            actual_damage = damage * 2
+            actual_damage = int(damage * 2.5)
             print("CRITICAL HIT!")
         else:
             actual_damage = max(0, damage - enemy.armour)
@@ -93,7 +92,7 @@ class Player:
         self.upgrades["Damage Upgrade"] += 1
 
     def upgrade_armour(self):
-        self.armour += 1
+        self.armour += 2
         self.upgrades["Armour Upgrade"] += 1
 
     def upgrade_score_bonus(self):
@@ -101,7 +100,7 @@ class Player:
         self.upgrades["Score Upgrade"] += 1
 
     def upgrade_crit(self):
-        self.crit_chance += 3
+        self.crit_chance += 4
         self.upgrades["Crit Upgrade"] += 1
 
     def apply_random_upgrade(self):
@@ -168,7 +167,7 @@ class Goblin(Enemy):
 
 class Healer(Enemy):
     def __init__(self):
-        super().__init__("Healer", 6, 0, 1, 1, 5)
+        super().__init__("Healer", 10, 0, 1, 1, 5)
 
     def special_attack(self, player):
         # Healer does a normal attack
@@ -176,10 +175,12 @@ class Healer(Enemy):
 
     def heal_enemy(self, enemies):
         # Healer can heal other enemies
-        alive_enemies = [e for e in enemies if e.is_alive() and e != self]
+        alive_enemies = [
+            e for e in enemies if e.is_alive() and e != self and e.hp < e.max_hp
+        ]
         if alive_enemies:
             target = random.choice(alive_enemies)
-            heal_amount = random.randint(1, 3)
+            heal_amount = 5
             target.hp = min(target.hp + heal_amount, target.max_hp)
             return target, heal_amount
         return None, 0
@@ -198,7 +199,7 @@ class Ogre(Enemy):
 
 class Dragon(Enemy):
     def __init__(self):
-        super().__init__("Dragon", 20, 2, 3, 5, 20)
+        super().__init__("Dragon", 25, 2, 3, 8, 25)
 
     def special_attack(self, player):
         # Dragon has fire breath that ignores half armor
@@ -213,7 +214,7 @@ class Game:
     def __init__(self):
         self.player = None
         self.current_enemies = []
-        self.next_upgrade_score = 10
+        self.next_upgrade_score = 5
         self.wave_number = 1
         self.game_over = False
 
@@ -221,21 +222,41 @@ class Game:
         os.system("cls" if os.name == "nt" else "clear")
         print("=== HORDE ATTACK ===")
         print("A text-based roguelike about a knight fighting his way to the castle\n")
-        print("1. Start New Game")
-        print("2. View Highscores")
-        print("3. Quit")
+
+        options = ["Start New Game", "View Highscores", "Quit"]
+        selected = 0
 
         while True:
-            choice = input("\nEnter your choice (1-3): ").strip()
-            if choice == "1":
-                return "start"
-            elif choice == "2":
-                self.show_highscores()
-                input("\nPress Enter to continue...")
-            elif choice == "3":
-                return "quit"
+            os.system("cls" if os.name == "nt" else "clear")
+            print("=== HORDE ATTACK ===")
+            print(
+                "A text-based roguelike about a knight fighting his way to the castle\n"
+            )
+
+            # Display menu with pointer
+            for i, option in enumerate(options):
+                if i == selected:
+                    print(f"> {option}")
+                else:
+                    print(f"  {option}")
+
+            print("\nUse 'w' or '↑' for up, 's' or '↓' for down, 'Enter' to select")
+            choice = input("Select: ").strip().lower()
+
+            if choice in ("w", "up", "↑"):
+                selected = (selected - 1) % 3
+            elif choice in ("s", "down", "↓"):
+                selected = (selected + 1) % 3
+            elif choice == "":
+                if selected == 0:
+                    return "start"
+                elif selected == 1:
+                    self.show_highscores()
+                    input("\nPress Enter to continue...")
+                elif selected == 2:
+                    return "quit"
             else:
-                print("Invalid choice. Please enter 1, 2, or 3.")
+                print("Invalid choice. Please enter 'w', 's', or 'Enter'.")
 
     def show_highscores(self):
         os.system("cls" if os.name == "nt" else "clear")
@@ -254,7 +275,7 @@ class Game:
 
         # Spawn logic with scaling
         which1 = random.randint(1, 100)
-        if self.wave_number < 5:
+        if self.wave_number < 4:
             # Early waves: mostly weak enemies
             if which1 <= 60:
                 enemy = Gremlin()
@@ -262,7 +283,7 @@ class Game:
             else:
                 enemy = Goblin()
                 print("Spawned Goblin")
-        elif self.wave_number < 9:
+        elif self.wave_number < 7:
             # Mid waves: mix
             if which1 <= 30:
                 enemy = Gremlin()
@@ -273,7 +294,7 @@ class Game:
             else:
                 enemy = Ogre()
                 print("Spawned Ogre")
-        else:
+        elif self.wave_number < 10:
             # Late waves: tougher spawns
             if which1 <= 20:
                 enemy = Gremlin()
@@ -282,6 +303,20 @@ class Game:
                 enemy = Goblin()
                 print("Spawned Goblin")
             elif which1 <= 90:
+                enemy = Ogre()
+                print("Spawned Ogre")
+            else:
+                enemy = Dragon()
+                print("Spawned Dragon!!!")
+        else:
+            # Wave 10+: Dragon-heavy spawns
+            if which1 <= 10:
+                enemy = Gremlin()
+                print("Spawned Gremlin")
+            elif which1 <= 40:
+                enemy = Goblin()
+                print("Spawned Goblin")
+            elif which1 <= 70:
                 enemy = Ogre()
                 print("Spawned Ogre")
             else:
@@ -472,7 +507,7 @@ class Game:
                         print("Try again! Must've had a typo :)")
                         continue
                 else:
-                    amount_healed = random.randint(1, 3)
+                    amount_healed = random.randint(8, 12)
                     self.player.heal(amount_healed)
                     print(f"You catch your breath and heal {amount_healed}")
                     print(f"You are now at {self.player.hp}/{self.player.max_hp} HP")
@@ -501,21 +536,38 @@ class Game:
 
     def show_game_menu(self):
         print("\n=== GAME MENU ===")
-        print("1. Resume Game")
-        print("2. View Stats")
-        print("3. Quit Game")
+
+        options = ["Resume Game", "View Stats", "Quit Game"]
+        selected = 0
 
         while True:
-            choice = input("Enter your choice (1-3): ").strip()
-            if choice == "1":
-                return "resume"
-            elif choice == "2":
-                self.display_player_stats()
-                input("Press Enter to continue...")
-            elif choice == "3":
-                return "quit"
+            os.system("cls" if os.name == "nt" else "clear")
+            print("=== GAME MENU ===")
+
+            # Display menu with pointer
+            for i, option in enumerate(options):
+                if i == selected:
+                    print(f"> {option}")
+                else:
+                    print(f"  {option}")
+
+            print("\nUse 'w' or '↑' for up, 's' or '↓' for down, 'Enter' to select")
+            choice = input("Select: ").strip().lower()
+
+            if choice in ("w", "up", "↑"):
+                selected = (selected - 1) % 3
+            elif choice in ("s", "down", "↓"):
+                selected = (selected + 1) % 3
+            elif choice == "":
+                if selected == 0:
+                    return "resume"
+                elif selected == 1:
+                    self.display_player_stats()
+                    input("Press Enter to continue...")
+                elif selected == 3:
+                    return "quit"
             else:
-                print("Invalid choice. Please enter 1, 2, or 3.")
+                print("Invalid choice. Please enter 'w', 's', or 'Enter'.")
 
     def enemy_turn(self):
         if not self.player:
@@ -531,7 +583,7 @@ class Game:
             # Healer special behavior
             if isinstance(enemy, Healer):
                 # 50% chance to heal another enemy, 50% to attack
-                if random.randint(1, 2) == 1:
+                if random.randint(1, 100) <= 75:
                     target, heal_amount = enemy.heal_enemy(self.current_enemies)
                     if target:
                         print(
@@ -542,7 +594,7 @@ class Game:
                 # If not healing, do normal attack
 
             # Randomly choose between normal attack and special attack
-            if random.randint(1, 3) == 1:  # 33% chance for special attack
+            if random.randint(1, 4) == 1:  # 25% chance for special attack
                 damage_taken = enemy.special_attack(self.player)
                 if isinstance(enemy, Goblin):
                     print(
