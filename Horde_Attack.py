@@ -1,14 +1,64 @@
-# Python Class Project - Horde Attack with Classes
-
-# A text-based roguelike about a knight fighting his way to the castle
-# Horde Attack - Class Version
+# ------------------------------------------------------------
+# Horde Attack – a text‑based roguelike
+# ------------------------------------------------------------
 
 # Imports
 import json
 import os
 import random
+import sys
+import termios
+import tty
 
-# Highscore management
+
+# ----------------------------------------------------------------
+def get_key() -> str:
+    """
+    Return a *complete* key code without requiring the user to press Enter.
+    - On **Unix** terminals arrow keys generate the 3‑character escape
+      sequence ``\x1b[<letter>`` (e.g. ``\x1b[A`` for Up).  We read the
+      extra two characters when the first one is ``\x1b``.
+    - On **Windows** ``msvcrt.getch()`` returns a two‑byte sequence where
+      the second byte is ``b'H'`` (Up), ``b'P'`` (Down), ``b'K'`` (Left),
+      or ``b'M'`` (Right).  Those are normalised to the same escape
+      strings used on Unix so the rest of the code can stay unchanged.
+    """
+    try:
+        # ----- Windows -------------------------------------------------
+        import msvcrt
+
+        first = msvcrt.getch()
+        # Arrow / function keys are reported as a prefix (0x00 or 0xE0)
+        # followed by a second byte that indicates the key.
+        if first in (b"\x00", b"\xe0"):
+            second = msvcrt.getch()
+            # Map Windows codes to Unix‑style escape strings
+            win_to_unix = {
+                b"H": "\x1b[A",  # Up
+                b"P": "\x1b[B",  # Down
+                b"K": "\x1b[D",  # Left
+                b"M": "\x1b[C",  # Right
+            }
+            return win_to_unix.get(second, second.decode())
+        else:
+            return first.decode()
+    except ImportError:
+        # ----- Unix / Linux / macOS ------------------------------------
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            ch = sys.stdin.read(1)
+            # If the first character is ESC, read the remaining two chars
+            if ch == "\x1b":
+                ch += sys.stdin.read(2)  # e.g. "[A", "[B", "[C", "[D"
+            return ch
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+
+# ----------------------------------------------------------------
+# Highscore handling (read/create file)
 try:
     with open("highscore.json", "r") as f:
         data = json.load(f)
@@ -29,6 +79,9 @@ except (FileNotFoundError, json.JSONDecodeError, KeyError):
             f,
             indent=4,
         )
+
+# ----------------------------------------------------------------
+# PLAYER ---------------------------------------------------------
 
 
 class Player:
@@ -61,31 +114,31 @@ class Player:
     def heal(self, amount):
         self.hp = min(self.hp + amount, self.max_hp)
 
-    def take_damage(self, damage):
-        actual_damage = max(0, damage - self.armour)
-        self.hp -= actual_damage
-        return actual_damage
+    def take_damage(self, dmg):
+        actual = max(0, dmg - self.armour)
+        self.hp -= actual
+        return actual
 
     def attack(self, enemy):
-        damage = self.damage()
+        dmg = self.damage()
         crit = random.randint(1, 100) <= self.crit_chance
         if crit:
-            actual_damage = int(damage * 2.5)
+            actual = int(dmg * 2.5)
             print("CRITICAL HIT!")
         else:
-            actual_damage = max(0, damage - enemy.armour)
+            actual = max(0, dmg - enemy.armour)
 
-        enemy.take_damage(actual_damage)
-        return actual_damage, crit
+        enemy.take_damage(actual)
+        return actual, crit
 
+    # ----- Upgrade methods -----------------------------------------
     def upgrade_hp(self):
         self.max_hp += 5
         self.hp += 5
         self.upgrades["Hp Upgrade"] += 1
 
     def upgrade_damage(self):
-        which1 = random.randint(1, 2)
-        if which1 == 1:
+        if random.randint(1, 2) == 1:
             self.min_damage += 1
         else:
             self.max_damage += 1
@@ -111,9 +164,13 @@ class Player:
             "Score Upgrade": self.upgrade_score_bonus,
             "Crit Upgrade": self.upgrade_crit,
         }
-        upgrade_name, func = random.choice(list(upgrades.items()))
+        name, func = random.choice(list(upgrades.items()))
         func()
-        return upgrade_name
+        return name
+
+
+# ----------------------------------------------------------------
+# ENEMIES ---------------------------------------------------------
 
 
 class Enemy:
@@ -132,16 +189,14 @@ class Enemy:
     def is_alive(self):
         return self.hp > 0
 
-    def take_damage(self, damage):
-        self.hp -= damage
+    def take_damage(self, dmg):
+        self.hp -= dmg
 
     def attack(self, player):
-        damage = self.damage()
-        damage_taken = player.take_damage(damage)
-        return damage_taken
+        dmg = self.damage()
+        return player.take_damage(dmg)
 
     def special_attack(self, player):
-        # Default enemy does a normal attack
         return self.attack(player)
 
 
@@ -149,41 +204,31 @@ class Gremlin(Enemy):
     def __init__(self):
         super().__init__("Gremlin", 1, 0, 1, 1, 1)
 
-    def special_attack(self, player):
-        # Gremlin does nothing special, just a weak attack
-        return self.attack(player)
-
 
 class Goblin(Enemy):
     def __init__(self):
         super().__init__("Goblin", 5, 0, 1, 2, 4)
 
     def special_attack(self, player):
-        # Goblin has a sword swing that does slightly more damage
-        damage = self.damage() + 1  # Slightly more damage
-        damage_taken = player.take_damage(damage)
-        return damage_taken
+        dmg = self.damage() + 1  # slightly stronger sword swing
+        return player.take_damage(dmg)
 
 
 class Healer(Enemy):
     def __init__(self):
         super().__init__("Healer", 10, 0, 1, 1, 5)
 
-    def special_attack(self, player):
-        # Healer does a normal attack
-        return self.attack(player)
-
     def heal_enemy(self, enemies):
-        # Healer can heal other enemies
-        alive_enemies = [
+        """Heal a random wounded ally (excluding self)."""
+        candidates = [
             e for e in enemies if e.is_alive() and e != self and e.hp < e.max_hp
         ]
-        if alive_enemies:
-            target = random.choice(alive_enemies)
-            heal_amount = 5
-            target.hp = min(target.hp + heal_amount, target.max_hp)
-            return target, heal_amount
-        return None, 0
+        if not candidates:
+            return None, 0
+        target = random.choice(candidates)
+        heal_amount = 5
+        target.hp = min(target.hp + heal_amount, target.max_hp)
+        return target, heal_amount
 
 
 class Ogre(Enemy):
@@ -191,10 +236,8 @@ class Ogre(Enemy):
         super().__init__("Ogre", 15, 0, 1, 2, 10)
 
     def special_attack(self, player):
-        # Ogre has a powerful smash attack that does double damage
-        damage = self.damage() * 2
-        damage_taken = player.take_damage(damage)
-        return damage_taken
+        dmg = self.damage() * 2
+        return player.take_damage(dmg)
 
 
 class Dragon(Enemy):
@@ -202,12 +245,15 @@ class Dragon(Enemy):
         super().__init__("Dragon", 25, 2, 3, 8, 25)
 
     def special_attack(self, player):
-        # Dragon has fire breath that ignores half armor
-        damage = self.damage()
+        dmg = self.damage()
         reduced_armour = player.armour // 2
-        damage_taken = max(0, damage - reduced_armour)
-        player.hp -= damage_taken
-        return damage_taken
+        taken = max(0, dmg - reduced_armour)
+        player.hp -= taken
+        return taken
+
+
+# ----------------------------------------------------------------
+# GAME LOGIC -------------------------------------------------------
 
 
 class Game:
@@ -218,11 +264,9 @@ class Game:
         self.wave_number = 1
         self.game_over = False
 
+    # -------------------- Menus ------------------------------------
     def start_menu(self):
-        os.system("cls" if os.name == "nt" else "clear")
-        print("=== HORDE ATTACK ===")
-        print("A text-based roguelike about a knight fighting his way to the castle\n")
-
+        """Main menu – navigation with single‑key presses."""
         options = ["Start New Game", "View Highscores", "Quit"]
         selected = 0
 
@@ -230,34 +274,59 @@ class Game:
             os.system("cls" if os.name == "nt" else "clear")
             print("=== HORDE ATTACK ===")
             print(
-                "A text-based roguelike about a knight fighting his way to the castle\n"
+                "A text‑based roguelike about a knight fighting his way to the castle\n"
             )
+            for i, opt in enumerate(options):
+                prefix = "> " if i == selected else "  "
+                print(f"{prefix}{opt}")
 
-            # Display menu with pointer
-            for i, option in enumerate(options):
-                if i == selected:
-                    print(f"> {option}")
-                else:
-                    print(f"  {option}")
+            print("\nUse 'w' / ↑ to move up, 's' / ↓ to move down, Enter to select")
+            key = get_key().lower()
 
-            print("\nUse 'w' or '↑' for up, 's' or '↓' for down, 'Enter' to select")
-            choice = input("Select: ").strip().lower()
-
-            if choice in ("w", "up", "↑"):
-                selected = (selected - 1) % 3
-            elif choice in ("s", "down", "↓"):
-                selected = (selected + 1) % 3
-            elif choice == "":
+            if key == "w" or key == "\x1b[A":  # up
+                selected = (selected - 1) % len(options)
+            elif key == "s" or key == "\x1b[B":  # down
+                selected = (selected + 1) % len(options)
+            elif key in ("\r", "\n"):  # Enter
                 if selected == 0:
                     return "start"
                 elif selected == 1:
                     self.show_highscores()
                     input("\nPress Enter to continue...")
-                elif selected == 2:
+                else:
                     return "quit"
-            else:
-                print("Invalid choice. Please enter 'w', 's', or 'Enter'.")
+            # any other key is ignored
 
+    def show_game_menu(self):
+        """In‑game pause menu – same navigation style as start_menu."""
+        options = ["Resume Game", "View Stats", "Quit Game"]
+        selected = 0
+
+        while True:
+            os.system("cls" if os.name == "nt" else "clear")
+            print("=== GAME MENU ===")
+            for i, opt in enumerate(options):
+                prefix = "> " if i == selected else "  "
+                print(f"{prefix}{opt}")
+
+            print("\nUse 'w' / ↑ to move up, 's' / ↓ to move down, Enter to select")
+            key = get_key().lower()
+
+            if key == "w" or key == "\x1b[A":
+                selected = (selected - 1) % len(options)
+            elif key == "s" or key == "\x1b[B":
+                selected = (selected + 1) % len(options)
+            elif key in ("\r", "\n"):
+                if selected == 0:
+                    return "resume"
+                elif selected == 1:
+                    self.display_player_stats()
+                    input("Press Enter to continue...")
+                else:
+                    return "quit"
+            # ignore other keys
+
+    # -------------------- Highscores -------------------------------
     def show_highscores(self):
         os.system("cls" if os.name == "nt" else "clear")
         print("=== HIGHSCORES ===")
@@ -265,65 +334,52 @@ class Game:
         if self.player:
             print(f"Your current score: {self.player.score}")
 
+    # -------------------- Player init ------------------------------
     def initialize_player(self, name):
         self.player = Player(name)
 
+    # -------------------- Enemy spawning ----------------------------
     def spawn_enemies(self):
-        # Reduced enemy scaling - less aggressive
-        hp_mult = 1 + (self.wave_number * 0.08)  # Changed from 0.15 to 0.08
-        dmg_mult = 1 + (self.wave_number * 0.05)  # Added damage scaling
+        """Spawn a single enemy with modest scaling."""
+        # Scaling – less aggressive (unchanged from your earlier edit)
+        hp_mult = 1 + (self.wave_number * 0.08)
+        dmg_mult = 1 + (self.wave_number * 0.05)
 
-        # Spawn logic with scaling
-        which1 = random.randint(1, 100)
-        if self.wave_number < 4:
-            # Early waves: mostly weak enemies
-            if which1 <= 60:
+        roll = random.randint(1, 100)
+
+        # Choose enemy type based on wave number
+        if self.wave_number < 4:  # early
+            if roll <= 60:
                 enemy = Gremlin()
-                print("Spawned Gremlin")
             else:
                 enemy = Goblin()
-                print("Spawned Goblin")
-        elif self.wave_number < 7:
-            # Mid waves: mix
-            if which1 <= 30:
+        elif self.wave_number < 7:  # mid
+            if roll <= 30:
                 enemy = Gremlin()
-                print("Spawned Gremlin")
-            elif which1 <= 80:
+            elif roll <= 80:
                 enemy = Goblin()
-                print("Spawned Goblin")
             else:
                 enemy = Ogre()
-                print("Spawned Ogre")
-        elif self.wave_number < 10:
-            # Late waves: tougher spawns
-            if which1 <= 20:
+        elif self.wave_number < 10:  # late
+            if roll <= 20:
                 enemy = Gremlin()
-                print("Spawned Gremlin")
-            elif which1 <= 60:
+            elif roll <= 60:
                 enemy = Goblin()
-                print("Spawned Goblin")
-            elif which1 <= 90:
+            elif roll <= 90:
                 enemy = Ogre()
-                print("Spawned Ogre")
             else:
                 enemy = Dragon()
-                print("Spawned Dragon!!!")
-        else:
-            # Wave 10+: Dragon-heavy spawns
-            if which1 <= 10:
+        else:  # 10+
+            if roll <= 10:
                 enemy = Gremlin()
-                print("Spawned Gremlin")
-            elif which1 <= 40:
+            elif roll <= 40:
                 enemy = Goblin()
-                print("Spawned Goblin")
-            elif which1 <= 70:
+            elif roll <= 70:
                 enemy = Ogre()
-                print("Spawned Ogre")
             else:
                 enemy = Dragon()
-                print("Spawned Dragon!!!")
 
-        # Scale enemy stats
+        # Apply scaling
         enemy.hp = int(enemy.hp * hp_mult)
         enemy.max_hp = enemy.hp
         enemy.min_damage = int(enemy.min_damage * dmg_mult)
@@ -331,61 +387,62 @@ class Game:
 
         self.current_enemies.append(enemy)
 
+        # Inform player what spawned
+        print(f"Spawned {enemy.name}")
+
     def spawn_wave(self):
+        """Create a wave consisting of 1‑3 enemies."""
         print(f"\n--- Wave {self.wave_number} ---")
 
-        # Wave bonus every 3 waves
+        # Bonus wave every 3 waves (same rule you already had)
         if self.wave_number > 1 and self.wave_number % 3 == 1:
             print("🎁 Bonus Wave! You gain +2 Max HP!")
             if self.player:
                 self.player.max_hp += 2
                 self.player.hp += 2
 
-        # Count current alive enemies
-        alive_count = sum(1 for e in self.current_enemies if e.is_alive())
-
-        # Spawn enemies to maintain 1-2 new enemies, up to max 5 total
-        amount_to_spawn = min(2, 5 - alive_count)
-
-        # Spawn enemies if we have room
-        if amount_to_spawn > 0:
-            for _ in range(amount_to_spawn):
-                self.spawn_enemies()
+        # 1‑3 enemies per wave, scaling with wave number slightly
+        count = random.randint(1, 3)
+        for _ in range(count):
+            self.spawn_enemies()
 
         self.wave_number += 1
 
+    # -------------------- Display helpers -------------------------
     def display_player_stats(self):
-        if self.player:
-            print(f"\nKnight {self.player.name} STATS")
-            print(f"You have {self.player.hp}/{self.player.max_hp} HP")
-            print(f"Kill count = {self.player.kills}")
-            print(f"Crit chance = {self.player.crit_chance}%")
-            print(f"Level = {self.player.level}")
-            print(f"Current Score = {self.player.score}")
-            for upgrade_name, count in self.player.upgrades.items():
-                if count > 0:
-                    print(f"{upgrade_name} x{count}")
+        if not self.player:
+            return
+        print(f"\nKnight {self.player.name} STATS")
+        print(f"HP: {self.player.hp}/{self.player.max_hp}")
+        print(f"Kills: {self.player.kills}")
+        print(f"Crit chance: {self.player.crit_chance}%")
+        print(f"Level: {self.player.level}")
+        print(f"Score: {self.player.score}")
+        for name, cnt in self.player.upgrades.items():
+            if cnt:
+                print(f"{name} x{cnt}")
 
     def display_enemies(self):
         print("\nENEMIES")
-        alive_count = 1  # Start numbering from 1 for alive enemies
-        for enemy in self.current_enemies:
-            if enemy.is_alive():
-                print(f"{alive_count}. {enemy.name} - {enemy.hp}/{enemy.max_hp} HP")
-                alive_count += 1
+        idx = 1
+        for e in self.current_enemies:
+            if e.is_alive():
+                print(f"{idx}. {e.name} – {e.hp}/{e.max_hp} HP")
+                idx += 1
+        if idx == 1:
+            print("None (all cleared)")
 
+    # -------------------- Upgrade handling -----------------------
     def offer_upgrade(self):
         if not self.player:
             return
-
         print("\n🎉 LEVEL UP! Choose an upgrade:")
         print("1. +5 Max HP")
         print("2. +1 Damage (Min or Max)")
         print("3. +1 Armour")
         print("4. +2 Score Bonus")
         print("5. +3 Crit Chance")
-
-        choice = input("Enter 1-5: ").strip()
+        choice = input("Enter 1‑5: ").strip()
         if choice == "1":
             self.player.upgrade_hp()
         elif choice == "2":
@@ -397,226 +454,136 @@ class Game:
         elif choice == "5":
             self.player.upgrade_crit()
         else:
-            print("Invalid choice. You gain a random upgrade.")
-            upgrade_name = self.player.apply_random_upgrade()
-            print(f"\nUPGRADE! You gained {upgrade_name}")
+            print("Invalid choice – you receive a random upgrade.")
+            name = self.player.apply_random_upgrade()
+            print(f"UPGRADED! You got: {name}")
 
+    # -------------------- Player turn -----------------------------
     def player_turn(self):
         if not self.player:
             return
-
         while True:
             action = (
-                input("\nWhat will you do? (Sword, Recover, Menu, or Quit): ")
+                input("\nWhat will you do? (Sword, Recover, Menu, Quit): ")
                 .strip()
                 .lower()
             )
 
             if action in ("sword", "swing", "sword swing"):
-                # Check if there are enemies to attack
+                # any alive enemies?
                 if not any(e.is_alive() for e in self.current_enemies):
-                    yes_no = input("No enemies! Swing anyway? y/n ").strip().lower()
-                    if yes_no == "y":
-                        print("You swing at the air")
+                    yn = input("No enemies! Swing anyway? (y/n) ").strip().lower()
+                    if yn == "y":
+                        print("You swing at the air.")
                         return
-                    elif yes_no == "n":
-                        continue
-                    else:
-                        print("Invalid input.")
-                        continue
-
-                # Choose which enemy to attack
-                target = input(
-                    "Swing your sword at which enemy? Enter number: "
-                ).strip()
-
-                # Check if the input is a number
-                if not target.isdigit():
-                    print("Invalid input.")
                     continue
 
-                # Find enemy by sequential number among alive enemies
-                target_number = int(target)
-                enemy = None
+                # pick target
+                target_str = input("Swing at which enemy? (number) ").strip()
+                if not target_str.isdigit():
+                    print("Please enter a number.")
+                    continue
+                target_num = int(target_str)
 
-                # Find the enemy with the matching display number
-                alive_count = 1
+                # map displayed number to actual enemy object
+                alive_idx = 1
+                target_enemy = None
                 for e in self.current_enemies:
                     if e.is_alive():
-                        if alive_count == target_number:
-                            enemy = e
+                        if alive_idx == target_num:
+                            target_enemy = e
                             break
-                        alive_count += 1
-
-                # If enemy not found or not alive
-                if enemy is None:
-                    print("That enemy doesn't exist or is already dead.")
+                        alive_idx += 1
+                if not target_enemy:
+                    print("No such enemy (or already dead).")
                     continue
 
-                # Attack the enemy
-                damage, crit = self.player.attack(enemy)
-
-                # Check if the enemy dies
-                if not enemy.is_alive():
-                    print(f"You slayed a {enemy.name}! Good job!")
-                    self.player.score += self.player.score_bonus + enemy.value
+                dmg, crit = self.player.attack(target_enemy)
+                if not target_enemy.is_alive():
+                    print(
+                        f"You slayed a {target_enemy.name}! (+{target_enemy.value} score)"
+                    )
+                    self.player.score += self.player.score_bonus + target_enemy.value
                     self.player.kills += 1
 
-                    if self.player.kills >= 100:
-                        print("You have won! Continue?")
-                        yes_no = input("y/n? ")
-                        if yes_no.lower() == "n":
-                            print("You have quit! You can close this now.")
-                            self.game_over = True
-                            return
-
+                    # level‑up/upgrade checks
                     while self.player.score >= self.next_upgrade_score:
                         self.offer_upgrade()
                         self.next_upgrade_score += 10
                         self.player.level += 1
 
-                        # Remove dead enemies from the list
-                        self.current_enemies = [
-                            e for e in self.current_enemies if e.is_alive()
-                        ]
-                else:
-                    if crit:
-                        print(
-                            f"You hit {enemy.name} for {damage} damage! (Critical Hit)"
-                        )
-                    else:
-                        print(f"You hit {enemy.name} for {damage} damage!")
+                    # Clean dead enemies from list
+                    self.current_enemies = [
+                        e for e in self.current_enemies if e.is_alive()
+                    ]
 
+                else:
+                    msg = f"You hit {target_enemy.name} for {dmg} damage"
+                    if crit:
+                        msg += " (CRITICAL!)"
+                    print(msg)
                 return
 
             elif action == "recover":
-                # Check if the player is at max health
                 if self.player.hp >= self.player.max_hp:
-                    yes_no = (
-                        input("You're already at max HP. Heal anyway? y/n ")
-                        .strip()
-                        .lower()
-                    )
-                    if yes_no == "y":
-                        print("You catch your breath and heal....none")
-                        return
-                    elif yes_no == "n":
-                        print("You decide to use your time more wisely.")
+                    yn = input("Already at max HP. Heal anyway? (y/n) ").strip().lower()
+                    if yn != "y":
                         continue
-                    else:
-                        print("Try again! Must've had a typo :)")
-                        continue
-                else:
-                    amount_healed = random.randint(8, 12)
-                    self.player.heal(amount_healed)
-                    print(f"You catch your breath and heal {amount_healed}")
-                    print(f"You are now at {self.player.hp}/{self.player.max_hp} HP")
-                    return
+                amount = random.randint(8, 12)
+                self.player.heal(amount)
+                print(
+                    f"You recover {amount} HP. ({self.player.hp}/{self.player.max_hp})"
+                )
+                return
 
             elif action == "menu":
-                menu_choice = self.show_game_menu()
-                if menu_choice == "resume":
+                choice = self.show_game_menu()
+                if choice == "resume":
                     continue
-                elif menu_choice == "quit":
+                if choice == "quit":
                     self.game_over = True
                     return
 
             elif action == "quit":
-                confirm = (
-                    input("Are you sure you want to quit? (y/n): ").strip().lower()
-                )
-                if confirm in ("y", "yes"):
+                if input("Really quit? (y/n) ").strip().lower() in ("y", "yes"):
                     self.game_over = True
                     return
-                else:
-                    continue
+                continue
 
             else:
-                print("Invalid action. Try: sword, recover, menu, or quit")
+                print("Invalid action – try: sword, recover, menu, quit")
 
-    def show_game_menu(self):
-        print("\n=== GAME MENU ===")
-
-        options = ["Resume Game", "View Stats", "Quit Game"]
-        selected = 0
-
-        while True:
-            os.system("cls" if os.name == "nt" else "clear")
-            print("=== GAME MENU ===")
-
-            # Display menu with pointer
-            for i, option in enumerate(options):
-                if i == selected:
-                    print(f"> {option}")
-                else:
-                    print(f"  {option}")
-
-            print("\nUse 'w' or '↑' for up, 's' or '↓' for down, 'Enter' to select")
-            choice = input("Select: ").strip().lower()
-
-            if choice in ("w", "up", "↑"):
-                selected = (selected - 1) % 3
-            elif choice in ("s", "down", "↓"):
-                selected = (selected + 1) % 3
-            elif choice == "":
-                if selected == 0:
-                    return "resume"
-                elif selected == 1:
-                    self.display_player_stats()
-                    input("Press Enter to continue...")
-                elif selected == 3:
-                    return "quit"
-            else:
-                print("Invalid choice. Please enter 'w', 's', or 'Enter'.")
-
+    # -------------------- Enemy turn -----------------------------
     def enemy_turn(self):
         if not self.player:
             return
-
-        # Process each enemy's turn
-        for enemy in self.current_enemies[
-            :
-        ]:  # Use a copy to avoid modification during iteration
+        for enemy in list(self.current_enemies):  # copy for safety
             if not enemy.is_alive():
                 continue
 
-            # Healer special behavior
-            if isinstance(enemy, Healer):
-                # 50% chance to heal another enemy, 50% to attack
-                if random.randint(1, 100) <= 75:
-                    target, heal_amount = enemy.heal_enemy(self.current_enemies)
-                    if target:
-                        print(
-                            f"{enemy.name} healed {target.name} for {heal_amount} HP!"
-                        )
-                        continue  # Skip normal attack
-                    # If no target to heal, fall through to normal attack
-                # If not healing, do normal attack
+            # Healer special: 75% chance to heal an ally
+            if isinstance(enemy, Healer) and random.randint(1, 100) <= 75:
+                target, healed = enemy.heal_enemy(self.current_enemies)
+                if target:
+                    print(f"{enemy.name} heals {target.name} for {healed} HP!")
+                    continue  # skip normal attack this turn
 
-            # Randomly choose between normal attack and special attack
-            if random.randint(1, 4) == 1:  # 25% chance for special attack
-                damage_taken = enemy.special_attack(self.player)
+            # 25% chance for a special attack
+            if random.randint(1, 4) == 1:
+                dmg = enemy.special_attack(self.player)
                 if isinstance(enemy, Goblin):
-                    print(
-                        f"{enemy.name} used Sword Swing and dealt {damage_taken} damage!"
-                    )
+                    print(f"{enemy.name} uses Sword Swing → {dmg} dmg!")
                 elif isinstance(enemy, Ogre):
-                    print(
-                        f"{enemy.name} used Powerful Smash and dealt {damage_taken} damage!"
-                    )
+                    print(f"{enemy.name} uses Powerful Smash → {dmg} dmg!")
                 elif isinstance(enemy, Dragon):
-                    print(
-                        f"{enemy.name} used Fire Breath and dealt {damage_taken} damage!"
-                    )
+                    print(f"{enemy.name} uses Fire Breath → {dmg} dmg!")
                 else:
-                    print(
-                        f"{enemy.name} used a special attack and dealt {damage_taken} damage!"
-                    )
+                    print(f"{enemy.name} uses a special attack → {dmg} dmg!")
             else:
-                # Normal attack
-                damage_taken = enemy.attack(self.player)
-                print(f"You took {damage_taken} damage from {enemy.name}!")
+                dmg = enemy.attack(self.player)
+                print(f"You take {dmg} damage from {enemy.name}!")
 
+    # -------------------- Game‑over check ------------------------
     def check_game_over(self):
         if not self.player or not self.player.is_alive():
             if self.player:
@@ -643,75 +610,73 @@ class Game:
                         f"{record_holder} now holds the record with {highscore} points!"
                     )
                 else:
-                    print("You didn't quite beat the high score!")
+                    print("You didn't beat the high score.")
                     print(
-                        f"Your score: {self.player.score} | High score: {highscore} | Held by: {record_holder}"
+                        f"Your score: {self.player.score} | High score: {highscore} (held by {record_holder})"
                     )
-
                 self.game_over = True
-                return True
+            return True
         return False
 
+    # -------------------- Main game loop -------------------------
     def play(self):
-        # Main game loop
+        """Run the game – a new wave starts only when the previous one is cleared."""
+        need_new_wave = True
+
         while not self.game_over:
-            # Clear screen for readability
             os.system("cls" if os.name == "nt" else "clear")
 
-            # Display player stats
-            self.display_player_stats()
-
-            # Spawn wave if needed - spawn when we have room for more enemies
-            alive_count = sum(1 for e in self.current_enemies if e.is_alive())
-            if alive_count < 5:  # If we have room for more enemies
+            # Start a fresh wave if there are no living enemies
+            if need_new_wave:
                 self.spawn_wave()
+                need_new_wave = False
 
-            # Display enemies
+            self.display_player_stats()
             self.display_enemies()
 
-            # Player turn
+            # Player action
             self.player_turn()
             if self.game_over:
                 break
 
-            # Check if game is over after player turn
+            # Check for victory/defeat after player turn
             if self.check_game_over():
                 break
 
-            # Enemy turn
+            # Enemy actions (only when any are alive)
             if any(e.is_alive() for e in self.current_enemies):
                 print("\n--- Enemy Turn ---")
                 self.enemy_turn()
                 input("Press Enter to continue...")
 
-            # Check if game is over after enemy turn
+            # Check again after enemies act
             if self.check_game_over():
                 break
 
+            # If all enemies are dead, trigger a new wave next iteration
+            if not any(e.is_alive() for e in self.current_enemies):
+                need_new_wave = True
 
-# Main game execution
+
+# ----------------------------------------------------------------
+# ENTRY POINT -----------------------------------------------------
+
+
 def main():
     game = Game()
-
     while True:
         choice = game.start_menu()
-
         if choice == "start":
-            name = input("\nPlease enter your name: ").strip()
-            if not name:
-                name = "Knight"
-
+            name = input("\nEnter your name: ").strip() or "Knight"
             print(f"Current record: {highscore} points (held by {record_holder})")
             print(f"Knight {name}'s run has started.")
-            input("Press Enter to begin your quest...")
+            input("Press Enter to begin...")
 
             game.initialize_player(name)
             game.play()
 
-            # After game over, return to main menu
             input("\nPress Enter to return to the main menu...")
-
-        elif choice == "quit":
+        else:  # choice == "quit"
             print("Thanks for playing Horde Attack!")
             break
 
