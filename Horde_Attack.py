@@ -292,7 +292,7 @@ class Game:
                     input("\nPress Enter to continue...")
                 else:
                     return "quit"
-            # other keys are ignored
+            # other keys ignored
 
     def show_game_menu(self):
         """In‑game pause menu – same navigation style as start_menu."""
@@ -421,6 +421,40 @@ class Game:
         if idx == 1:
             print("None (all cleared)")
 
+    # -------------------- Enemy selection helper -----------------
+    # -------------------- Enemy selection helper -----------------
+    def choose_enemy(self):
+        """Let the player pick a living enemy with w/↑/s/↓/Enter."""
+        living = [e for e in self.current_enemies if e.is_alive()]
+        if not living:
+            return None
+
+        selected = 0
+        while True:
+            # Clear the terminal and show BOTH the player stats and the enemy list
+            os.system("cls" if os.name == "nt" else "clear")
+            print("\n=== PLAYER STATS ===")
+            # Re‑use the existing method that prints all the stats
+            self.display_player_stats()
+
+            print("\nSelect target:")
+            for i, e in enumerate(living):
+                prefix = "> " if i == selected else "  "
+                print(f"{prefix}{i+1}. {e.name} – {e.hp}/{e.max_hp} HP")
+            print("\nUse 'w' / ↑ to move, 's' / ↓ to move, Enter to select")
+
+            key = get_key()
+            norm = key.lower() if len(key) == 1 else key
+
+            if norm == "w" or key == "\x1b[A":
+                selected = (selected - 1) % len(living)
+            elif norm == "s" or key == "\x1b[B":
+                selected = (selected + 1) % len(living)
+            elif key in ("\r", "\n"):
+                return living[selected]
+            # ignore other keys
+
+
     # -------------------- Upgrade handling -----------------------
     def offer_upgrade(self):
         if not self.player:
@@ -466,24 +500,12 @@ class Game:
                         return
                     continue
 
-                target_str = input("Swing at which enemy? (number) ").strip()
-                if not target_str.isdigit():
-                    print("Please enter a number.")
-                    continue
-                target_num = int(target_str)
-
-                alive_idx = 1
-                target_enemy = None
-                for e in self.current_enemies:
-                    if e.is_alive():
-                        if alive_idx == target_num:
-                            target_enemy = e
-                            break
-                        alive_idx += 1
-
+                # ---- NEW: interactive enemy selection -----------------
+                target_enemy = self.choose_enemy()
                 if not target_enemy:
-                    print("No such enemy (or already dead).")
+                    print("There are no living enemies.")
                     continue
+                # -----------------------------------------------------
 
                 dmg, crit = self.player.attack(target_enemy)
                 if not target_enemy.is_alive():
@@ -498,6 +520,7 @@ class Game:
                         self.next_upgrade_score += 10
                         self.player.level += 1
 
+                    # Remove dead enemies from the list
                     self.current_enemies = [
                         e for e in self.current_enemies if e.is_alive()
                     ]
