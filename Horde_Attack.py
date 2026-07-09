@@ -32,7 +32,6 @@ def get_key() -> str:
         # followed by a second byte that indicates the key.
         if first in (b"\x00", b"\xe0"):
             second = msvcrt.getch()
-            # Map Windows codes to Unix‑style escape strings
             win_to_unix = {
                 b"H": "\x1b[A",  # Up
                 b"P": "\x1b[B",  # Down
@@ -49,9 +48,8 @@ def get_key() -> str:
         try:
             tty.setraw(fd)
             ch = sys.stdin.read(1)
-            # If the first character is ESC, read the remaining two chars
             if ch == "\x1b":
-                ch += sys.stdin.read(2)  # e.g. "[A", "[B", "[C", "[D"
+                ch += sys.stdin.read(2)   # read the two extra chars
             return ch
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
@@ -80,9 +78,9 @@ except (FileNotFoundError, json.JSONDecodeError, KeyError):
             indent=4,
         )
 
+
 # ----------------------------------------------------------------
 # PLAYER ---------------------------------------------------------
-
 
 class Player:
     def __init__(self, name):
@@ -172,7 +170,6 @@ class Player:
 # ----------------------------------------------------------------
 # ENEMIES ---------------------------------------------------------
 
-
 class Enemy:
     def __init__(self, name, hp, armour, min_damage, max_damage, value):
         self.name = name
@@ -210,7 +207,7 @@ class Goblin(Enemy):
         super().__init__("Goblin", 5, 0, 1, 2, 4)
 
     def special_attack(self, player):
-        dmg = self.damage() + 1  # slightly stronger sword swing
+        dmg = self.damage() + 1
         return player.take_damage(dmg)
 
 
@@ -255,7 +252,6 @@ class Dragon(Enemy):
 # ----------------------------------------------------------------
 # GAME LOGIC -------------------------------------------------------
 
-
 class Game:
     def __init__(self):
         self.player = None
@@ -281,13 +277,14 @@ class Game:
                 print(f"{prefix}{opt}")
 
             print("\nUse 'w' / ↑ to move up, 's' / ↓ to move down, Enter to select")
-            key = get_key().lower()
+            key = get_key()
+            normalized = key.lower() if len(key) == 1 else key
 
-            if key == "w" or key == "\x1b[A":  # up
+            if normalized == "w" or key == "\x1b[A":
                 selected = (selected - 1) % len(options)
-            elif key == "s" or key == "\x1b[B":  # down
+            elif normalized == "s" or key == "\x1b[B":
                 selected = (selected + 1) % len(options)
-            elif key in ("\r", "\n"):  # Enter
+            elif normalized in ("\r", "\n"):
                 if selected == 0:
                     return "start"
                 elif selected == 1:
@@ -295,7 +292,7 @@ class Game:
                     input("\nPress Enter to continue...")
                 else:
                     return "quit"
-            # any other key is ignored
+            # other keys are ignored
 
     def show_game_menu(self):
         """In‑game pause menu – same navigation style as start_menu."""
@@ -310,11 +307,12 @@ class Game:
                 print(f"{prefix}{opt}")
 
             print("\nUse 'w' / ↑ to move up, 's' / ↓ to move down, Enter to select")
-            key = get_key().lower()
+            key = get_key()
+            normalized = key.lower() if len(key) == 1 else key
 
-            if key == "w" or key == "\x1b[A":
+            if normalized == "w" or key == "\x1b[A":
                 selected = (selected - 1) % len(options)
-            elif key == "s" or key == "\x1b[B":
+            elif normalized == "s" or key == "\x1b[B":
                 selected = (selected + 1) % len(options)
             elif key in ("\r", "\n"):
                 if selected == 0:
@@ -341,26 +339,21 @@ class Game:
     # -------------------- Enemy spawning ----------------------------
     def spawn_enemies(self):
         """Spawn a single enemy with modest scaling."""
-        # Scaling – less aggressive (unchanged from your earlier edit)
         hp_mult = 1 + (self.wave_number * 0.08)
         dmg_mult = 1 + (self.wave_number * 0.05)
 
         roll = random.randint(1, 100)
 
-        # Choose enemy type based on wave number
-        if self.wave_number < 4:  # early
-            if roll <= 60:
-                enemy = Gremlin()
-            else:
-                enemy = Goblin()
-        elif self.wave_number < 7:  # mid
+        if self.wave_number < 4:          # early
+            enemy = Gremlin() if roll <= 60 else Goblin()
+        elif self.wave_number < 7:        # mid
             if roll <= 30:
                 enemy = Gremlin()
             elif roll <= 80:
                 enemy = Goblin()
             else:
                 enemy = Ogre()
-        elif self.wave_number < 10:  # late
+        elif self.wave_number < 10:       # late
             if roll <= 20:
                 enemy = Gremlin()
             elif roll <= 60:
@@ -369,7 +362,7 @@ class Game:
                 enemy = Ogre()
             else:
                 enemy = Dragon()
-        else:  # 10+
+        else:                             # 10+
             if roll <= 10:
                 enemy = Gremlin()
             elif roll <= 40:
@@ -386,22 +379,18 @@ class Game:
         enemy.max_damage = int(enemy.max_damage * dmg_mult)
 
         self.current_enemies.append(enemy)
-
-        # Inform player what spawned
         print(f"Spawned {enemy.name}")
 
     def spawn_wave(self):
         """Create a wave consisting of 1‑3 enemies."""
         print(f"\n--- Wave {self.wave_number} ---")
 
-        # Bonus wave every 3 waves (same rule you already had)
         if self.wave_number > 1 and self.wave_number % 3 == 1:
             print("🎁 Bonus Wave! You gain +2 Max HP!")
             if self.player:
                 self.player.max_hp += 2
                 self.player.hp += 2
 
-        # 1‑3 enemies per wave, scaling with wave number slightly
         count = random.randint(1, 3)
         for _ in range(count):
             self.spawn_enemies()
@@ -470,7 +459,6 @@ class Game:
             )
 
             if action in ("sword", "swing", "sword swing"):
-                # any alive enemies?
                 if not any(e.is_alive() for e in self.current_enemies):
                     yn = input("No enemies! Swing anyway? (y/n) ").strip().lower()
                     if yn == "y":
@@ -478,14 +466,12 @@ class Game:
                         return
                     continue
 
-                # pick target
                 target_str = input("Swing at which enemy? (number) ").strip()
                 if not target_str.isdigit():
                     print("Please enter a number.")
                     continue
                 target_num = int(target_str)
 
-                # map displayed number to actual enemy object
                 alive_idx = 1
                 target_enemy = None
                 for e in self.current_enemies:
@@ -494,6 +480,7 @@ class Game:
                             target_enemy = e
                             break
                         alive_idx += 1
+
                 if not target_enemy:
                     print("No such enemy (or already dead).")
                     continue
@@ -506,17 +493,14 @@ class Game:
                     self.player.score += self.player.score_bonus + target_enemy.value
                     self.player.kills += 1
 
-                    # level‑up/upgrade checks
                     while self.player.score >= self.next_upgrade_score:
                         self.offer_upgrade()
                         self.next_upgrade_score += 10
                         self.player.level += 1
 
-                    # Clean dead enemies from list
                     self.current_enemies = [
                         e for e in self.current_enemies if e.is_alive()
                     ]
-
                 else:
                     msg = f"You hit {target_enemy.name} for {dmg} damage"
                     if crit:
@@ -557,16 +541,16 @@ class Game:
     def enemy_turn(self):
         if not self.player:
             return
-        for enemy in list(self.current_enemies):  # copy for safety
+        for enemy in list(self.current_enemies):
             if not enemy.is_alive():
                 continue
 
-            # Healer special: 75% chance to heal an ally
+            # Healer healing chance
             if isinstance(enemy, Healer) and random.randint(1, 100) <= 75:
                 target, healed = enemy.heal_enemy(self.current_enemies)
                 if target:
                     print(f"{enemy.name} heals {target.name} for {healed} HP!")
-                    continue  # skip normal attack this turn
+                    continue
 
             # 25% chance for a special attack
             if random.randint(1, 4) == 1:
@@ -626,7 +610,6 @@ class Game:
         while not self.game_over:
             os.system("cls" if os.name == "nt" else "clear")
 
-            # Start a fresh wave if there are no living enemies
             if need_new_wave:
                 self.spawn_wave()
                 need_new_wave = False
@@ -634,33 +617,32 @@ class Game:
             self.display_player_stats()
             self.display_enemies()
 
-            # Player action
+            # Player turn
             self.player_turn()
             if self.game_over:
                 break
 
-            # Check for victory/defeat after player turn
+            # Check after player action
             if self.check_game_over():
                 break
 
-            # Enemy actions (only when any are alive)
+            # Enemy turn (only if any are alive)
             if any(e.is_alive() for e in self.current_enemies):
                 print("\n--- Enemy Turn ---")
                 self.enemy_turn()
                 input("Press Enter to continue...")
 
-            # Check again after enemies act
+            # Check again
             if self.check_game_over():
                 break
 
-            # If all enemies are dead, trigger a new wave next iteration
+            # All enemies dead → next wave on next loop
             if not any(e.is_alive() for e in self.current_enemies):
                 need_new_wave = True
 
 
 # ----------------------------------------------------------------
 # ENTRY POINT -----------------------------------------------------
-
 
 def main():
     game = Game()
@@ -676,7 +658,7 @@ def main():
             game.play()
 
             input("\nPress Enter to return to the main menu...")
-        else:  # choice == "quit"
+        else:   # quit
             print("Thanks for playing Horde Attack!")
             break
 
