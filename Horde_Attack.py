@@ -1,6 +1,13 @@
 # ------------------------------------------------------------
 # Horde Attack – a text‑based roguelike (rewritten & improved)
 # ------------------------------------------------------------
+# New features:
+#   • Enemies gated by wave number (10, 20, 30, 50, 100)
+#   • Boss wave every 5 waves
+#   • Quit‑and‑save without dying
+#   • “wait” action (do nothing)
+#   • Upgrades are persisted in highscore.json
+# ------------------------------------------------------------
 
 # ────────────────────── Imports ─────────────────────────────
 import json
@@ -18,7 +25,7 @@ from typing import List, Tuple, Optional, Dict, Callable
 STARTING_HP: int = 25
 STARTING_ARMOUR: int = 0
 STARTING_DAMAGE: Tuple[int, int] = (1, 5)          # (min, max)
-STARTING_CRIT_CHANCE: int = 10                    # percent
+STARTING_CRIT_CHANCE: int = 10                  # percent
 
 # ---- Scaling / balance -------------------------------------------------
 CRIT_MULTIPLIER: float = 2.5
@@ -30,7 +37,7 @@ HP_UPGRADE_VALUE: int = 5
 DMG_UPGRADE_VALUE: int = 1
 ARMOUR_UPGRADE_VALUE: int = 2
 SCORE_BONUS_VALUE: int = 2
-CRIT_UPGRADE_VALUE: int = 4                       # percent per upgrade
+CRIT_UPGRADE_VALUE: int = 4                     # percent per upgrade
 MAX_CRIT_CHANCE: int = 100
 
 # ---- Miscellaneous ------------------------------------------------------
@@ -38,7 +45,7 @@ RECOVER_MIN: int = 8
 RECOVER_MAX: int = 12
 HEALER_CHANCE: int = 75            # % chance a Healer will heal an ally
 SPECIAL_ATTACK_CHANCE: float = 0.25  # 25 % chance to use special attack
-BONUS_WAVE_OFFSET: int = 2         # first bonus wave = wave 2
+BONUS_WAVE_OFFSET: int = 2          # first bonus wave = wave 2
 
 # ---- File handling -------------------------------------------------------
 HIGHSCORE_FILE: Path = Path("highscore.json")
@@ -68,7 +75,7 @@ def get_key() -> str:
         return first.decode()
     except ImportError:                    # Unix / macOS
         if not sys.stdin.isatty():
-            # non‑interactive fallback – behave like a normal input()
+            # Non‑interactive fallback
             return input()
         fd = sys.stdin.fileno()
         old = termios.tcgetattr(fd)
@@ -76,38 +83,49 @@ def get_key() -> str:
             tty.setraw(fd)
             ch = sys.stdin.read(1)
             if ch == "\x1b":
-                ch += sys.stdin.read(2)   # eat the rest of the escape
+                ch += sys.stdin.read(2)   # eat the rest of the escape seq
             return ch
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 
-def load_highscore() -> Tuple[int, str, int]:
-    """Load high‑score data, creating a default file if needed."""
+def load_highscore() -> Tuple[int, str, int, Dict[str, int]]:
+    """
+    Load high‑score data, creating a default file if needed.
+    Returns (score, holder, kill_count, upgrades_dict).
+    """
     if not HIGHSCORE_FILE.exists():
-        save_highscore(0, "", 0)
-        return 0, "", 0
+        save_highscore(0, "", 0, {})
+        return 0, "", 0, {}
 
     try:
         with HIGHSCORE_FILE.open(encoding="utf-8") as f:
             data = json.load(f)
-        return data["highscore"], data["record_holder"], data["kill_count"]
+        upgrades = data.get("record_upgrades", {})
+        return data["highscore"], data["record_holder"], data["kill_count"], upgrades
     except (json.JSONDecodeError, KeyError, OSError):
-        # Corrupt file – reset to defaults
-        save_highscore(0, "", 0)
-        return 0, "", 0
+        save_highscore(0, "", 0, {})
+        return 0, "", 0, {}
 
 
-def save_highscore(score: int, holder: str, kills: int) -> None:
-    """Write high‑score data atomically."""
+def save_highscore(score: int,
+                   holder: str,
+                   kills: int,
+                   upgrades: Dict[str, int]) -> None:
+    """
+    Write high‑score data atomically.
+    `upgrades` is stored under the key "record_upgrades".
+    """
     tmp = HIGHSCORE_FILE.with_suffix(".tmp")
+    data = {
+        "highscore": score,
+        "record_holder": holder,
+        "kill_count": kills,
+        "record_upgrades": upgrades,
+    }
     try:
         with tmp.open("w", encoding="utf-8") as f:
-            json.dump(
-                {"highscore": score, "record_holder": holder, "kill_count": kills},
-                f,
-                indent=4,
-            )
+            json.dump(data, f, indent=4)
         tmp.replace(HIGHSCORE_FILE)          # atomic on most platforms
     except OSError as exc:
         print(f"⚠️  Could not write highscore: {exc}")
@@ -198,7 +216,6 @@ class Player:
         self.upgrades["HP Upgrade"] += 1
 
     def upgrade_damage(self) -> None:
-        # randomly bump min or max
         if random.randint(1, 2) == 1:
             self.min_damage += DMG_UPGRADE_VALUE
         else:
@@ -219,15 +236,15 @@ class Player:
         self.upgrades["Crit Upgrade"] += 1
 
     def apply_random_upgrade(self) -> str:
-        """Pick a random upgrade, apply it and return its name."""
-        choices: List[Tuple[str, Callable[[], None]]] = [
+        """Pick a random upgrade, apply it and return the upgrade name."""
+        candidates: List[Tuple[str, Callable[[], None]]] = [
             ("HP Upgrade", self.upgrade_hp),
             ("Damage Upgrade", self.upgrade_damage),
             ("Armour Upgrade", self.upgrade_armour),
             ("Score Upgrade", self.upgrade_score_bonus),
             ("Crit Upgrade", self.upgrade_crit),
         ]
-        name, func = random.choice(choices)
+        name, func = random.choice(candidates)
         func()
         return name
 
@@ -263,40 +280,36 @@ class Enemy:
 
     # ---------- combat ----------
     def attack(self, player: Player) -> int:
-        """Normal attack against the player."""
         dmg = self.damage()
         return player.take_damage(dmg)
 
     def special_attack(self, player: Player) -> int:
-        """Default special attack simply calls normal attack."""
         return self.attack(player)
 
 
 # ----- concrete enemy types ---------------------------------
 class Gremlin(Enemy):
     def __init__(self) -> None:
-        super().__init__("Gremlin", hp=1, armour=0, min_damage=1, max_damage=1,
-                         value=1)
+        super().__init__("Gremlin", hp=1, armour=0,
+                         min_damage=1, max_damage=1, value=1)
 
 
 class Goblin(Enemy):
     def __init__(self) -> None:
-        super().__init__("Goblin", hp=5, armour=0, min_damage=1, max_damage=2,
-                         value=4)
+        super().__init__("Goblin", hp=5, armour=0,
+                         min_damage=1, max_damage=2, value=4)
 
     def special_attack(self, player: Player) -> int:
-        # +1 damage on special
         dmg = self.damage() + 1
         return player.take_damage(dmg)
 
 
 class Healer(Enemy):
     def __init__(self) -> None:
-        super().__init__("Healer", hp=10, armour=0, min_damage=1, max_damage=1,
-                         value=5)
+        super().__init__("Healer", hp=10, armour=0,
+                         min_damage=1, max_damage=1, value=5)
 
     def heal_ally(self, allies: List[Enemy]) -> Tuple[Optional[Enemy], int]:
-        """Heal a random wounded ally (excluding self). Returns (target, amount)."""
         candidates = [
             e for e in allies
             if e.is_alive() and e is not self and e.hp < e.max_hp
@@ -304,7 +317,6 @@ class Healer(Enemy):
         if not candidates:
             return None, 0
         target = random.choice(candidates)
-        # Healing scales a little with wave later – keep simple for now
         heal_amount = 5
         target.hp = min(target.hp + heal_amount, target.max_hp)
         return target, heal_amount
@@ -312,8 +324,8 @@ class Healer(Enemy):
 
 class Ogre(Enemy):
     def __init__(self) -> None:
-        super().__init__("Ogre", hp=15, armour=0, min_damage=1, max_damage=2,
-                         value=10)
+        super().__init__("Ogre", hp=15, armour=0,
+                         min_damage=1, max_damage=2, value=10)
 
     def special_attack(self, player: Player) -> int:
         dmg = self.damage() * 2
@@ -322,14 +334,64 @@ class Ogre(Enemy):
 
 class Dragon(Enemy):
     def __init__(self) -> None:
-        super().__init__("Dragon", hp=25, armour=2, min_damage=3, max_damage=8,
-                         value=25)
+        super().__init__("Dragon", hp=25, armour=2,
+                         min_damage=3, max_damage=8, value=25)
 
     def special_attack(self, player: Player) -> int:
         dmg = self.damage()
         reduced_armour = player.armour // 2
         dmg = max(0, dmg - reduced_armour)
-        player.hp -= dmg       # bypass armour check – dragon flame
+        player.hp -= dmg                 # bypass armour
+        return dmg
+
+
+# ----- NEW ENEMIES (appear after certain waves) -----
+class Minotaur(Enemy):
+    """Appears after wave 10."""
+    def __init__(self) -> None:
+        super().__init__("Minotaur", hp=35, armour=3,
+                         min_damage=4, max_damage=9, value=40)
+
+
+class Wraith(Enemy):
+    """Appears after wave 20."""
+    def __init__(self) -> None:
+        super().__init__("Wraith", hp=45, armour=4,
+                         min_damage=5, max_damage=11, value=55)
+
+
+class Lich(Enemy):
+    """Appears after wave 30."""
+    def __init__(self) -> None:
+        super().__init__("Lich", hp=60, armour=5,
+                         min_damage=6, max_damage=13, value=70)
+
+
+class Demon(Enemy):
+    """Appears after wave 50."""
+    def __init__(self) -> None:
+        super().__init__("Demon", hp=80, armour=6,
+                         min_damage=8, max_damage=16, value=90)
+
+
+class AncientDragon(Enemy):
+    """Appears after wave 100 – the ultimate foe."""
+    def __init__(self) -> None:
+        super().__init__("Ancient Dragon", hp=120, armour=8,
+                         min_damage=10, max_damage=20, value=150)
+
+
+# ----- BOSS -----
+class Boss(Enemy):
+    """Boss wave every 5 waves."""
+    def __init__(self) -> None:
+        super().__init__("Boss", hp=200, armour=10,
+                         min_damage=12, max_damage=22, value=200)
+
+    def special_attack(self, player: Player) -> int:
+        dmg = self.damage() * 3
+        player.take_damage(dmg)
+        print("💢 Boss unleashes a massive strike!")
         return dmg
 
 
@@ -351,17 +413,22 @@ class Game:
 
     def game_menu(self) -> str:
         choice = navigate_menu(
-            ["Resume Game", "View Stats", "Quit Game"], "GAME MENU"
+            ["Resume Game", "View Stats", "Quit Game", "Quit & Save"], "GAME MENU"
         )
-        return ["resume", "stats", "quit"][choice]
+        return ["resume", "stats", "quit", "savequit"][choice]
 
     # ---------- high‑score ----------
     def show_highscores(self) -> None:
         clear_screen()
         print("=== HIGHSCORES ===")
         print(f"Record: {highscore} points (held by {record_holder})")
+        if record_upgrades:
+            print("\nUpgrades used for the record:")
+            for name, cnt in record_upgrades.items():
+                if cnt:
+                    print(f"  {name}: {cnt}")
         if self.player:
-            print(f"Your current score: {self.player.score}")
+            print(f"\nYour current score: {self.player.score}")
 
     # ---------- player ----------
     def init_player(self, name: str) -> None:
@@ -379,46 +446,106 @@ class Game:
         enemy.max_damage = int(enemy.max_damage * dmg_mult)
         return enemy
 
+    def _fallback_enemy(self) -> Enemy:
+        """Pick a “classic” enemy for early waves."""
+        roll = random.randint(1, 100)
+        if self.wave_number < 4:                     # early
+            return Gremlin() if roll <= 60 else Goblin()
+        elif self.wave_number < 7:                  # mid
+            if roll <= 30:
+                return Gremlin()
+            elif roll <= 80:
+                return Goblin()
+            else:
+                return Ogre()
+        elif self.wave_number < 10:                 # late
+            if roll <= 20:
+                return Gremlin()
+            elif roll <= 60:
+                return Goblin()
+            elif roll <= 90:
+                return Ogre()
+            else:
+                return Dragon()
+        else:
+            # generic late‑game
+            if roll <= 10:
+                return Gremlin()
+            elif roll <= 40:
+                return Goblin()
+            elif roll <= 70:
+                return Ogre()
+            else:
+                return Dragon()
+
     def spawn_enemy(self) -> Enemy:
         """Create a single enemy respecting current wave difficulty."""
-        roll = random.randint(1, 100)
-
-        # Choose base enemy type
-        if self.wave_number < 4:                      # early game
-            enemy = Gremlin() if roll <= 60 else Goblin()
-        elif self.wave_number < 7:                    # mid game
-            if roll <= 30:
-                enemy = Gremlin()
-            elif roll <= 80:
-                enemy = Goblin()
-            else:
-                enemy = Ogre()
-        elif self.wave_number < 10:                   # late game
-            if roll <= 20:
-                enemy = Gremlin()
-            elif roll <= 60:
-                enemy = Goblin()
-            elif roll <= 90:
-                enemy = Ogre()
-            else:
-                enemy = Dragon()
-        else:                                         # wave 10+
-            if roll <= 10:
-                enemy = Gremlin()
+        # --- tiered unlocks -------------------------------------------------
+        if self.wave_number >= 100:
+            roll = random.randint(1, 100)
+            if roll <= 5:
+                enemy = AncientDragon()
+            elif roll <= 20:
+                enemy = Demon()
             elif roll <= 40:
-                enemy = Goblin()
-            elif roll <= 70:
-                enemy = Ogre()
+                enemy = Lich()
+            elif roll <= 60:
+                enemy = Wraith()
+            elif roll <= 80:
+                enemy = Minotaur()
             else:
-                enemy = Dragon()
+                enemy = self._fallback_enemy()
+        elif self.wave_number >= 50:
+            roll = random.randint(1, 100)
+            if roll <= 10:
+                enemy = Demon()
+            elif roll <= 30:
+                enemy = Lich()
+            elif roll <= 60:
+                enemy = Wraith()
+            elif roll <= 85:
+                enemy = Minotaur()
+            else:
+                enemy = self._fallback_enemy()
+        elif self.wave_number >= 30:
+            roll = random.randint(1, 100)
+            if roll <= 15:
+                enemy = Lich()
+            elif roll <= 45:
+                enemy = Wraith()
+            elif roll <= 80:
+                enemy = Minotaur()
+            else:
+                enemy = self._fallback_enemy()
+        elif self.wave_number >= 20:
+            roll = random.randint(1, 100)
+            if roll <= 20:
+                enemy = Wraith()
+            elif roll <= 70:
+                enemy = Minotaur()
+            else:
+                enemy = self._fallback_enemy()
+        elif self.wave_number >= 10:
+            roll = random.randint(1, 100)
+            if roll <= 25:
+                enemy = Minotaur()
+            else:
+                enemy = self._fallback_enemy()
+        else:
+            enemy = self._fallback_enemy()
 
         return self._scale_enemy(enemy)
 
     def spawn_wave(self) -> None:
         print(f"\n--- Wave {self.wave_number} ---")
-        # Bonus wave logic (every 3rd wave: 2, 5, 8, …)
+        # ---- Boss wave every 5 waves ------------------------------------
+        if self.wave_number % 5 == 0:
+            print("💀 BOSS WAVE! A fearsome Boss appears!")
+            self.enemies.append(self._scale_enemy(Boss()))
+            # a boss wave still gets the normal enemy count (adds extra threat)
+        # ---- Bonus wave -------------------------------------------------
         if (self.wave_number - BONUS_WAVE_OFFSET) % 3 == 0:
-            print("🎁 Bonus Wave! +2 Max HP")
+            print(f"🎁 Bonus Wave! +{WAVE_BONUS_HP} Max HP")
             if self.player:
                 self.player.max_hp += WAVE_BONUS_HP
                 self.player.hp += WAVE_BONUS_HP
@@ -434,8 +561,12 @@ class Game:
         if not self.player:
             return
         p = self.player
-        print(f"\nKnight {p.name} – HP: {p.hp}/{p.max_hp}  Armour: {p.armour}")
-        print(f"Kills: {p.kills}  Crit: {p.crit_chance}%  Level: {p.level}")
+        print(
+            f"\nKnight {p.name} – HP: {p.hp}/{p.max_hp}  Armour: {p.armour}"
+        )
+        print(
+            f"Kills: {p.kills}  Crit: {p.crit_chance}%  Level: {p.level}"
+        )
         print(f"Score: {p.score}  Score bonus: +{p.score_bonus}")
         for name, cnt in p.upgrades.items():
             if cnt:
@@ -503,13 +634,14 @@ class Game:
 
     # ---------- player turn ----------
     SWORD_CMDS = {"sword", "swing", "sword swing", "attack"}
+    WAIT_CMDS = {"wait", "idle", "nothing"}
 
     def player_turn(self) -> None:
         if not self.player:
             return
         while True:
             action = input(
-                "\nWhat will you do? (Sword, Recover, Menu, Quit): "
+                "\nWhat will you do? (Sword, Recover, Wait, Menu, Quit): "
             ).strip().lower()
 
             # ---------- attack ----------
@@ -552,7 +684,9 @@ class Game:
             # ---------- recover ----------
             elif action == "recover":
                 if self.player.hp >= self.player.max_hp:
-                    yn = input("Already at max HP. Heal anyway? (y/n) ").strip().lower()
+                    yn = input(
+                        "Already at max HP. Heal anyway? (y/n) "
+                    ).strip().lower()
                     if yn != "y":
                         continue
                 amount = random.randint(RECOVER_MIN, RECOVER_MAX)
@@ -560,6 +694,11 @@ class Game:
                 print(
                     f"You recover {amount} HP. ({self.player.hp}/{self.player.max_hp})"
                 )
+                return
+
+            # ---------- wait (do nothing) ----------
+            elif action in self.WAIT_CMDS:
+                print("You wait, gathering your thoughts...")
                 return
 
             # ---------- menu ----------
@@ -573,16 +712,39 @@ class Game:
                 if choice == "quit":
                     self.game_over = True
                     return
+                if choice == "savequit":
+                    self._save_and_quit()
+                    return
 
             # ---------- quit ----------
             elif action == "quit":
                 if input("Really quit? (y/n) ").strip().lower() in ("y", "yes"):
-                    self.game_over = True
+                    self._save_and_quit()
                     return
                 continue
 
             else:
-                print("Invalid action – try: sword, recover, menu, quit")
+                print("Invalid action – try: sword, recover, wait, menu, quit")
+
+    # ---------- quit & save ----------
+    def _save_and_quit(self) -> None:
+        """Save highscore if it’s a record and end the game."""
+        if self.player:
+            global highscore, record_holder, highscore_kills, record_upgrades
+            if self.player.score > highscore:
+                highscore = self.player.score
+                record_holder = self.player.name
+                highscore_kills = self.player.kills
+                record_upgrades = dict(self.player.upgrades)
+                save_highscore(highscore, record_holder,
+                               highscore_kills, record_upgrades)
+                print("\n🎉 New highscore saved!")
+            else:
+                # Still persist current upgrades (optional)
+                save_highscore(highscore, record_holder,
+                               highscore_kills, record_upgrades)
+                print("\nScore saved (no new record).")
+        self.game_over = True
 
     # ---------- enemy turn ----------
     def enemy_turn(self) -> None:
@@ -596,7 +758,9 @@ class Game:
             if isinstance(enemy, Healer) and random.randint(1, 100) <= HEALER_CHANCE:
                 target, healed = enemy.heal_ally(self.enemies)
                 if target:
-                    print(f"{enemy.name} heals {target.name} for {healed} HP!")
+                    print(
+                        f"{enemy.name} heals {target.name} for {healed} HP!"
+                    )
                     continue
 
             # Special attack chance
@@ -608,6 +772,9 @@ class Game:
                     print(f"{enemy.name} uses Powerful Smash → {dmg} dmg!")
                 elif isinstance(enemy, Dragon):
                     print(f"{enemy.name} uses Fire Breath → {dmg} dmg!")
+                elif isinstance(enemy, Boss):
+                    # Boss already printed a line inside its special_attack
+                    pass
                 else:
                     print(f"{enemy.name} uses a special attack → {dmg} dmg!")
             else:
@@ -622,12 +789,14 @@ class Game:
                 print(f"Final Score: {self.player.score}")
                 print(f"Enemies Slain: {self.player.kills}")
 
-                global highscore, record_holder, highscore_kills
+                global highscore, record_holder, highscore_kills, record_upgrades
                 if self.player.score > highscore:
                     highscore = self.player.score
                     record_holder = self.player.name
                     highscore_kills = self.player.kills
-                    save_highscore(highscore, record_holder, highscore_kills)
+                    record_upgrades = dict(self.player.upgrades)
+                    save_highscore(highscore, record_holder,
+                                   highscore_kills, record_upgrades)
                     print("🎉 NEW HIGHSCORE!")
                     print(
                         f"{record_holder} now holds the record with {highscore} points!"
@@ -678,7 +847,8 @@ class Game:
 
 
 # ────────────────────── Entry point ───────────────────────
-highscore, record_holder, highscore_kills = load_highscore()
+# Load high‑score (including stored upgrades)
+highscore, record_holder, highscore_kills, record_upgrades = load_highscore()
 
 
 def main() -> None:
