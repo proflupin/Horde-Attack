@@ -195,11 +195,11 @@ class Player:
         self.upgrades["HP Upgrade"] += 1
 
     def upgrade_damage(self) -> None:
-        if random.randint(1, 2) == 1:
-            self.min_damage += DMG_UPGRADE_VALUE
-        else:
-            self.max_damage += DMG_UPGRADE_VALUE
+        """Increase both min and max damage by the upgrade value."""
+        self.min_damage += DMG_UPGRADE_VALUE
+        self.max_damage += DMG_UPGRADE_VALUE
         self.upgrades["Damage Upgrade"] += 1
+
 
     def upgrade_armour(self) -> None:
         self.armour += ARMOUR_UPGRADE_VALUE

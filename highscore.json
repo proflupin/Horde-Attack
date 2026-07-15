@@ -1,6 +1,12 @@
 {
-    "highscore": 49,
+    "highscore": 57,
     "record_holder": "obie",
-    "kill_count": 16,
-    "record_upgrades": {}
+    "kill_count": 12,
+    "record_upgrades": {
+        "HP Upgrade": 0,
+        "Armour Upgrade": 1,
+        "Damage Upgrade": 2,
+        "Score Upgrade": 2,
+        "Crit Upgrade": 1
+    }
 }
