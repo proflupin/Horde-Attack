@@ -2,11 +2,9 @@
 # Horde Attack – a text‑based roguelike (rewritten & improved)
 # ------------------------------------------------------------
 # New features:
-#   • Enemies gated by wave number (10, 20, 30, 50, 100)
-#   • Boss wave every 5 waves
-#   • Quit‑and‑save without dying
-#   • “wait” action (do nothing)
-#   • Upgrades are persisted in highscore.json
+#   • Nerfed recurring boss (fixed stats, no wave scaling)
+#   • All previous functionality (upgrades, high‑score persistence,
+#     wait action, quit‑and‑save, etc.) unchanged.
 # ------------------------------------------------------------
 
 # ────────────────────── Imports ─────────────────────────────
@@ -25,7 +23,7 @@ from typing import List, Tuple, Optional, Dict, Callable
 STARTING_HP: int = 25
 STARTING_ARMOUR: int = 0
 STARTING_DAMAGE: Tuple[int, int] = (1, 5)          # (min, max)
-STARTING_CRIT_CHANCE: int = 10                  # percent
+STARTING_CRIT_CHANCE: int = 10                     # percent
 
 # ---- Scaling / balance -------------------------------------------------
 CRIT_MULTIPLIER: float = 2.5
@@ -37,7 +35,7 @@ HP_UPGRADE_VALUE: int = 5
 DMG_UPGRADE_VALUE: int = 1
 ARMOUR_UPGRADE_VALUE: int = 2
 SCORE_BONUS_VALUE: int = 2
-CRIT_UPGRADE_VALUE: int = 4                     # percent per upgrade
+CRIT_UPGRADE_VALUE: int = 4                       # percent per upgrade
 MAX_CRIT_CHANCE: int = 100
 
 # ---- Miscellaneous ------------------------------------------------------
@@ -375,23 +373,29 @@ class Demon(Enemy):
 
 
 class AncientDragon(Enemy):
-    """Appears after wave 100 – the ultimate foe."""
+    """Appears after wave 100."""
     def __init__(self) -> None:
         super().__init__("Ancient Dragon", hp=120, armour=8,
                          min_damage=10, max_damage=20, value=150)
 
 
-# ----- BOSS -----
+# ----- BOSS (every 5 waves) -----
 class Boss(Enemy):
-    """Boss wave every 5 waves."""
+    """Boss wave every 5 waves.
+
+    The boss is deliberately **excluded** from the generic wave‑scaler,
+    so its stats stay fixed at the values defined here.
+    """
     def __init__(self) -> None:
-        super().__init__("Boss", hp=200, armour=10,
-                         min_damage=12, max_damage=22, value=200)
+        # Fixed, nerfed stats
+        super().__init__("Boss", hp=80, armour=5,
+                         min_damage=8, max_damage=14, value=200)
 
     def special_attack(self, player: Player) -> int:
-        dmg = self.damage() * 3
+        # 2× multiplier feels heavy but not lethal.
+        dmg = self.damage() * 2
         player.take_damage(dmg)
-        print("💢 Boss unleashes a massive strike!")
+        print("💢 Boss unleashes a heavy strike!")
         return dmg
 
 
@@ -413,7 +417,8 @@ class Game:
 
     def game_menu(self) -> str:
         choice = navigate_menu(
-            ["Resume Game", "View Stats", "Quit Game", "Quit & Save"], "GAME MENU"
+            ["Resume Game", "View Stats", "Quit Game", "Quit & Save"],
+            "GAME MENU"
         )
         return ["resume", "stats", "quit", "savequit"][choice]
 
@@ -436,10 +441,19 @@ class Game:
 
     # ---------- enemy spawning ----------
     def _scale_enemy(self, enemy: Enemy) -> Enemy:
-        """Apply wave‑based scaling to hp and damage."""
+        """Apply wave‑based scaling to hp and damage.
+
+        The Boss is **not** scaled – its stats are already tuned for a
+        challenging but beatable fight.
+        """
         hp_mult = 1 + (self.wave_number * 0.08)
         dmg_mult = 1 + (self.wave_number * 0.05)
 
+        if isinstance(enemy, Boss):
+            enemy.max_hp = enemy.hp   # keep fixed hp
+            return enemy
+
+        # Normal scaling for all other enemies
         enemy.hp = int(enemy.hp * hp_mult)
         enemy.max_hp = enemy.hp
         enemy.min_damage = int(enemy.min_damage * dmg_mult)
@@ -479,8 +493,9 @@ class Game:
                 return Dragon()
 
     def spawn_enemy(self) -> Enemy:
-        """Create a single enemy respecting current wave difficulty."""
-        # --- tiered unlocks -------------------------------------------------
+        """Create a single enemy respecting wave‑based unlocks."""
+
+        # ---- tiered unlocks -------------------------------------------------
         if self.wave_number >= 100:
             roll = random.randint(1, 100)
             if roll <= 5:
@@ -542,7 +557,7 @@ class Game:
         if self.wave_number % 5 == 0:
             print("💀 BOSS WAVE! A fearsome Boss appears!")
             self.enemies.append(self._scale_enemy(Boss()))
-            # a boss wave still gets the normal enemy count (adds extra threat)
+
         # ---- Bonus wave -------------------------------------------------
         if (self.wave_number - BONUS_WAVE_OFFSET) % 3 == 0:
             print(f"🎁 Bonus Wave! +{WAVE_BONUS_HP} Max HP")
@@ -644,7 +659,7 @@ class Game:
                 "\nWhat will you do? (Sword, Recover, Wait, Menu, Quit): "
             ).strip().lower()
 
-            # ---------- attack ----------
+            # ---------- regular sword ----------
             if action in self.SWORD_CMDS:
                 if not any(e.is_alive() for e in self.enemies):
                     yn = input("No enemies! Swing anyway? (y/n) ").strip().lower()
@@ -660,9 +675,7 @@ class Game:
 
                 dmg, crit = self.player.attack(target)
                 if not target.is_alive():
-                    print(
-                        f"You slayed a {target.name}! (+{target.value} score)"
-                    )
+                    print(f"You slayed a {target.name}! (+{target.value} score)")
                     self.player.score += self.player.score_bonus + target.value
                     self.player.kills += 1
 
@@ -728,7 +741,7 @@ class Game:
 
     # ---------- quit & save ----------
     def _save_and_quit(self) -> None:
-        """Save highscore if it’s a record and end the game."""
+        """Save high‑score if it’s a record and end the game."""
         if self.player:
             global highscore, record_holder, highscore_kills, record_upgrades
             if self.player.score > highscore:
@@ -740,7 +753,6 @@ class Game:
                                highscore_kills, record_upgrades)
                 print("\n🎉 New highscore saved!")
             else:
-                # Still persist current upgrades (optional)
                 save_highscore(highscore, record_holder,
                                highscore_kills, record_upgrades)
                 print("\nScore saved (no new record).")
@@ -773,7 +785,7 @@ class Game:
                 elif isinstance(enemy, Dragon):
                     print(f"{enemy.name} uses Fire Breath → {dmg} dmg!")
                 elif isinstance(enemy, Boss):
-                    # Boss already printed a line inside its special_attack
+                    # Boss already printed its own message
                     pass
                 else:
                     print(f"{enemy.name} uses a special attack → {dmg} dmg!")
