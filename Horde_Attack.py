@@ -619,8 +619,11 @@ class Game:
                 dmg, crit = self.player.attack(target)
                 if not target.is_alive():
                     print(f"You slayed a {target.name}! (+{target.value} score)")
-                    self.player.score += self.player.score_bonus + target.value
+                    bonus = self.player.score_bonus
+                    self.player.score += bonus + target.value
+                    print(f"  (+{bonus} bonus) → +{bonus + target.value} total points")
                     self.player.kills += 1
+
 
                     # level‑up / upgrades
                     while self.player.score >= self.next_upgrade_score:
